@@ -1,0 +1,287 @@
+:root {
+  color-scheme: dark;
+  --bg: #15171c;
+  --panel: #1e2128;
+  --border: #2e323c;
+  --accent: #4f8cff;
+  --accent-2: #3ad29f;
+  --text: #e6e8ec;
+  --muted: #8b909a;
+  --danger: #ff6b6b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+
+h1 {
+  font-size: 22px;
+  margin: 0 0 4px;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin: 0 0 24px;
+  font-size: 14px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+select,
+input[type='number'] {
+  background: #14161b;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+input[type='number'] {
+  width: 100px;
+}
+
+button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+button:hover {
+  filter: brightness(1.1);
+}
+
+button.secondary {
+  background: #2a2e38;
+  color: var(--text);
+}
+
+button.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+button.danger {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid #3a2a2e;
+  padding: 6px 10px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+video {
+  width: 100%;
+  border-radius: 10px;
+  background: #000;
+  margin-top: 12px;
+}
+
+.time-display {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+td .cell {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.error {
+  background: #3a2226;
+  border: 1px solid #5a2e34;
+  color: #ffb4b4;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+
+.results a {
+  color: var(--accent);
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.flex-spacer {
+  flex: 1;
+}
+
+.upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-2);
+  color: #06231a;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.upload-btn:hover {
+  filter: brightness(1.05);
+}
+
+.upload-btn input[type='file'] {
+  display: none;
+}
+
+.timeline {
+  position: relative;
+  height: 44px;
+  margin-top: 12px;
+  background: #14161b;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+}
+
+.timeline .seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.timeline .seg-0 {
+  background: rgba(79, 140, 255, 0.28);
+}
+
+.timeline .seg-1 {
+  background: rgba(58, 210, 159, 0.28);
+}
+
+.timeline .split {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 0;
+  border-left: 2px solid #ffd166;
+  margin-left: -1px;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.timeline .split::before {
+  content: '✂';
+  position: absolute;
+  top: -2px;
+  left: -7px;
+  font-size: 11px;
+  background: #ffd166;
+  color: #06231a;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.timeline .split:hover::before {
+  content: '✕';
+  background: var(--danger);
+  color: #fff;
+}
+
+.timeline .playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid #fff;
+  margin-left: -1px;
+  pointer-events: none;
+  z-index: 3;
+}

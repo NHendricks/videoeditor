@@ -1,0 +1,6 @@
+# Quell- und generierte Videos nicht einchecken
+/videos/*
+!/videos/.gitkeep
+
+# lokale Konfiguration
+.env
