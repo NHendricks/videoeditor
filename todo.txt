@@ -1,3 +1,2 @@
 - mac und linux supporten
 - mehrere videos zusammenfügen erlauben
-- zeit einblenden als video bearbeitungsfunktion

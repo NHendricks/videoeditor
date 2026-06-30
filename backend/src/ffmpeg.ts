@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -129,9 +130,36 @@ export interface SegmentSpec {
  * Extrahiert einen Bereich [start, end] und beschleunigt ihn um `speed`.
  * Folgt dem Muster aus scripts/ffmpeg_speedup_part.bat bzw. ffmpeg_range_and_speedup.bat.
  */
-/** Schriftdatei fürs Zeit-Overlay (per .env überschreibbar). */
+/** Mögliche Standard-Schriftdateien je Plattform (erste vorhandene wird genutzt). */
+function defaultFontCandidates(): string[] {
+  switch (process.platform) {
+    case 'win32':
+      return ['C:/Windows/Fonts/consola.ttf', 'C:/Windows/Fonts/arial.ttf'];
+    case 'darwin':
+      return [
+        '/System/Library/Fonts/Menlo.ttc',
+        '/System/Library/Fonts/SFNSMono.ttf',
+        '/System/Library/Fonts/Supplemental/Courier New.ttf',
+        '/System/Library/Fonts/Helvetica.ttc',
+        '/Library/Fonts/Arial.ttf',
+      ];
+    default: // linux & sonstige
+      return [
+        '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf',
+        '/usr/share/fonts/TTF/DejaVuSansMono.ttf',
+        '/usr/share/fonts/dejavu/DejaVuSansMono.ttf',
+      ];
+  }
+}
+
+/** Schriftdatei fürs Zeit-Overlay (per .env überschreibbar, sonst plattformabhängig). */
 function overlayFontFile(): string {
-  return process.env.OVERLAY_FONTFILE?.trim() || 'C:/Windows/Fonts/consola.ttf';
+  const explicit = process.env.OVERLAY_FONTFILE?.trim();
+  if (explicit) return explicit;
+  const candidates = defaultFontCandidates();
+  return candidates.find((p) => existsSync(p)) ?? candidates[0]!;
 }
 
 /**
@@ -166,6 +194,15 @@ export async function extractSegment(
   signal?: AbortSignal,
 ): Promise<void> {
   const { start, end, speed } = seg;
+  if (overlayTime) {
+    const f = overlayFontFile();
+    if (!existsSync(f)) {
+      throw new Error(
+        `Schriftdatei für das Zeit-Overlay nicht gefunden: "${f}". ` +
+          `Bitte OVERLAY_FONTFILE in backend/.env auf eine vorhandene .ttf/.ttc-Datei setzen.`,
+      );
+    }
+  }
   // drawtext nach dem trim (nur relevante Frames), aber vor setpts (Originalzeit erhalten).
   const overlay = overlayTime ? `,${drawtextOriginalTime()}` : '';
   const vChain = `[0:v]trim=start=${start}:end=${end}${overlay},setpts=(PTS-STARTPTS)/${speed}[v]`;

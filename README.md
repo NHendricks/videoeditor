@@ -7,10 +7,17 @@ die per ffmpeg als **separate Clips** extrahiert und anschließend zu einem Gesa
 - **Frontend:** Vite + TypeScript + [lit-html](https://lit.dev/docs/libraries/standalone-templates/)
 - **Backend:** [Hono](https://hono.dev/) (Node) + ffmpeg
 
+Läuft unter **Windows, macOS und Linux**.
+
 ## Voraussetzungen
 
 - Node.js ≥ 20
-- ffmpeg (und ffprobe) installiert. Pfad wird im Backend per `.env` konfiguriert.
+- ffmpeg (inkl. ffprobe) installiert:
+  - **Windows:** Build von [ffmpeg.org](https://ffmpeg.org/download.html) (mit `drawtext`/libfreetype für das Zeit-Overlay)
+  - **macOS:** `brew install ffmpeg`
+  - **Linux:** `sudo apt install ffmpeg` (bzw. Paketmanager der Distribution)
+
+Der ffmpeg-Pfad wird im Backend per `.env` konfiguriert (oder einfach `ffmpeg`, wenn es im PATH liegt).
 
 ## Setup
 
@@ -19,13 +26,12 @@ die per ffmpeg als **separate Clips** extrahiert und anschließend zu einem Gesa
 npm run install:all
 
 # Backend-Konfiguration anlegen
-cp backend/.env.example backend/.env
-# in backend/.env den FFMPEG_PATH setzen, z. B.:
-#   FFMPEG_PATH=C:\tools\ffmpeg\bin\ffmpeg.exe
+cp backend/.env.example backend/.env      # Windows PowerShell: copy backend\.env.example backend\.env
+# bei Bedarf FFMPEG_PATH in backend/.env anpassen
 ```
 
-Quellvideos in den Ordner `backend/videos/` legen (`.mp4`, `.mov`, `.mkv`, `.webm`, `.m4v`).
-Dieser Ordner ist per `.gitignore` ausgenommen.
+Quellvideos in den Ordner `backend/videos/` legen (`.mp4`, `.mov`, `.mkv`, `.webm`, `.m4v`)
+oder direkt in der App hochladen. Dieser Ordner ist per `.gitignore` ausgenommen.
 
 ## Starten
 
