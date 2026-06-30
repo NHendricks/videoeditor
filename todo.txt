@@ -1,2 +1,1 @@
-- mac und linux supporten
 - mehrere videos zusammenfügen erlauben
