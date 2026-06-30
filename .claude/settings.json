@@ -3,7 +3,8 @@
     "allow": [
       "Bash(d:/Programme/ffmpeg/bin/ffmpeg.exe -version)",
       "Bash(\"d:/Programme/ffmpeg/bin/ffprobe.exe\" -version)",
-      "PowerShell(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; \"backend gestoppt\")"
+      "PowerShell(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; \"backend gestoppt\")",
+      "Bash(npx tsx *)"
     ]
   }
 }

@@ -26,11 +26,30 @@ interface RunResult {
   stderr: string;
 }
 
-function run(bin: string, args: string[], onLine?: (line: string) => void): Promise<RunResult> {
+function run(
+  bin: string,
+  args: string[],
+  onLine?: (line: string) => void,
+  signal?: AbortSignal,
+): Promise<RunResult> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      resolve({ code: -1, stderr: 'aborted' });
+      return;
+    }
     const child = spawn(bin, args, { windowsHide: true });
     let stderr = '';
     let buf = '';
+    // Bei Abbruch den ffmpeg-Prozess hart beenden.
+    const onAbort = () => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+
     child.stderr.on('data', (d) => {
       const text = d.toString();
       stderr += text;
@@ -45,8 +64,12 @@ function run(bin: string, args: string[], onLine?: (line: string) => void): Prom
         }
       }
     });
-    child.on('error', (err) => reject(err));
+    child.on('error', (err) => {
+      signal?.removeEventListener('abort', onAbort);
+      reject(err);
+    });
     child.on('close', (code) => {
+      signal?.removeEventListener('abort', onAbort);
       if (onLine && buf.trim()) onLine(buf.trim());
       resolve({ code: code ?? -1, stderr });
     });
@@ -106,15 +129,46 @@ export interface SegmentSpec {
  * Extrahiert einen Bereich [start, end] und beschleunigt ihn um `speed`.
  * Folgt dem Muster aus scripts/ffmpeg_speedup_part.bat bzw. ffmpeg_range_and_speedup.bat.
  */
+/** Schriftdatei fürs Zeit-Overlay (per .env überschreibbar). */
+function overlayFontFile(): string {
+  return process.env.OVERLAY_FONTFILE?.trim() || 'C:/Windows/Fonts/consola.ttf';
+}
+
+/**
+ * drawtext-Filter, der die laufende ORIGINAL-Zeit als hh:mm:ss.zehntel oben rechts einblendet.
+ * Nutzt die Frame-Zeit `t`; muss VOR dem setpts (Speed/Reset) angewandt werden, damit `t`
+ * die unveränderten Originalzeitstempel trägt.
+ */
+function drawtextOriginalTime(): string {
+  // Logischer Text mit echten ":" und ",". Wird danach für filter_complex escaped:
+  // Im filter_complex muss ":" als "\\:" (zwei Ebenen) und "," als "\," kodiert werden,
+  // damit weder Graph- noch drawtext-Parser fälschlich splitten.
+  const logical =
+    '%{eif:floor(t/3600):d:2}:' + // hh
+    '%{eif:floor(mod(t,3600)/60):d:2}:' + // mm
+    '%{eif:floor(mod(t,60)):d:2}.' + // ss
+    '%{eif:floor(mod(t*10,10)):d:1}'; // Zehntel
+  const text = logical.replace(/:/g, '\\\\:').replace(/,/g, '\\,');
+  const font = overlayFontFile().replace(/\\/g, '/').replace(/:/g, '\\\\:');
+  return (
+    `drawtext=fontfile=${font}:text=${text}` +
+    ':x=w-tw-20:y=20:fontsize=28:fontcolor=white:borderw=2:bordercolor=black'
+  );
+}
+
 export async function extractSegment(
   input: string,
   output: string,
   seg: SegmentSpec,
   withAudio: boolean,
+  overlayTime: boolean,
   onLine?: (line: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const { start, end, speed } = seg;
-  const vChain = `[0:v]trim=start=${start}:end=${end},setpts=(PTS-STARTPTS)/${speed}[v]`;
+  // drawtext nach dem trim (nur relevante Frames), aber vor setpts (Originalzeit erhalten).
+  const overlay = overlayTime ? `,${drawtextOriginalTime()}` : '';
+  const vChain = `[0:v]trim=start=${start}:end=${end}${overlay},setpts=(PTS-STARTPTS)/${speed}[v]`;
 
   let args: string[];
   if (withAudio) {
@@ -141,7 +195,8 @@ export async function extractSegment(
     ];
   }
 
-  const { code, stderr } = await run(ffmpegPath(), args, onLine);
+  const { code, stderr } = await run(ffmpegPath(), args, onLine, signal);
+  if (signal?.aborted) throw new Error('abgebrochen');
   if (code !== 0) {
     throw new Error(`ffmpeg (Segment) fehlgeschlagen (Code ${code}):\n${tail(stderr)}`);
   }
@@ -155,6 +210,7 @@ export async function mergeSegments(
   files: string[],
   output: string,
   onLine?: (line: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (files.length === 0) throw new Error('Keine Clips zum Zusammenfügen.');
 
@@ -171,10 +227,12 @@ export async function mergeSegments(
     ffmpegPath(),
     ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', output],
     onLine,
+    signal,
   );
 
   await fs.rm(listPath, { force: true });
 
+  if (signal?.aborted) throw new Error('abgebrochen');
   if (code !== 0) {
     throw new Error(`ffmpeg (Merge) fehlgeschlagen (Code ${code}):\n${tail(stderr)}`);
   }

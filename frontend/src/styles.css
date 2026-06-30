@@ -191,6 +191,21 @@ td .cell {
   flex: 1;
 }
 
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.check-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
 .upload-btn {
   display: inline-flex;
   align-items: center;
@@ -244,6 +259,25 @@ td .cell {
 
 .timeline .seg-1 {
   background: rgba(58, 210, 159, 0.28);
+}
+
+.timeline .seg-skip {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(120, 124, 134, 0.25),
+    rgba(120, 124, 134, 0.25) 6px,
+    rgba(120, 124, 134, 0.1) 6px,
+    rgba(120, 124, 134, 0.1) 12px
+  );
+  color: var(--muted);
+}
+
+tr.row-skip {
+  opacity: 0.5;
+}
+
+tr.row-skip .time-display {
+  text-decoration: line-through;
 }
 
 .timeline .split {

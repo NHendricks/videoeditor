@@ -87,6 +87,7 @@ app.post('/api/upload', async (c) => {
 interface ProcessBody {
   source: string;
   segments: SegmentSpec[];
+  overlayTime?: boolean;
 }
 
 /**
@@ -102,6 +103,7 @@ app.post('/api/process', async (c) => {
   }
 
   const { source, segments } = body;
+  const overlayTime = body.overlayTime === true;
 
   // --- Validierung ---
   if (!source || typeof source !== 'string') {
@@ -144,6 +146,12 @@ app.post('/api/process', async (c) => {
 
   return stream(c, async (s) => {
     const send = (ev: Record<string, unknown>) => s.writeln(JSON.stringify(ev));
+
+    // Bei Client-Abbruch (Cancel/Verbindung getrennt) ffmpeg beenden.
+    const ac = new AbortController();
+    s.onAbort(() => ac.abort());
+    c.req.raw.signal?.addEventListener('abort', () => ac.abort(), { once: true });
+
     try {
       const withAudio = await probeHasAudio(inputPath);
       const sourceBase = path.basename(source, path.extname(source));
@@ -154,13 +162,20 @@ app.post('/api/process', async (c) => {
       const segmentResults: { file: string; url: string; spec: SegmentSpec }[] = [];
 
       for (const [i, seg] of segments.entries()) {
+        if (ac.signal.aborted) return;
         const name = `${sourceBase}_part${String(i + 1).padStart(3, '0')}.mp4`;
         const outPath = path.join(jobDir, name);
         // Erwartete Ausgabedauer für den Fortschrittsbalken im Frontend.
         const expected = (seg.end - seg.start) / seg.speed;
         await send({ type: 'step', step: 'segment', index: i + 1, total: segments.length, expected });
-        await extractSegment(inputPath, outPath, seg, withAudio, (line) =>
-          void send({ type: 'log', line }),
+        await extractSegment(
+          inputPath,
+          outPath,
+          seg,
+          withAudio,
+          overlayTime,
+          (line) => void send({ type: 'log', line }),
+          ac.signal,
         );
         segmentFiles.push(outPath);
         segmentResults.push({ file: name, url: `/videos/output/${jobId}/${name}`, spec: seg });
@@ -168,16 +183,23 @@ app.post('/api/process', async (c) => {
 
       let merged: { file: string; url: string } | null = null;
       if (segmentFiles.length >= 1) {
+        if (ac.signal.aborted) return;
         const mergedName = `${sourceBase}_merged.mp4`;
         const mergedPath = path.join(jobDir, mergedName);
         const expected = segments.reduce((sum, sg) => sum + (sg.end - sg.start) / sg.speed, 0);
         await send({ type: 'step', step: 'merge', expected });
-        await mergeSegments(segmentFiles, mergedPath, (line) => void send({ type: 'log', line }));
+        await mergeSegments(
+          segmentFiles,
+          mergedPath,
+          (line) => void send({ type: 'log', line }),
+          ac.signal,
+        );
         merged = { file: mergedName, url: `/videos/output/${jobId}/${mergedName}` };
       }
 
       await send({ type: 'done', result: { jobId, withAudio, segments: segmentResults, merged } });
     } catch (err) {
+      if (ac.signal.aborted) return; // Abbruch ist kein Fehler.
       const message = err instanceof Error ? err.message : String(err);
       await send({ type: 'error', message });
     }

@@ -4,6 +4,7 @@ interface Section {
   start: number;
   end: number;
   speed: number;
+  skip: boolean;
 }
 
 interface ProcessResult {
@@ -15,6 +16,7 @@ interface ProcessResult {
 
 interface Progress {
   done: boolean;
+  cancelled: boolean;
   step: string; // menschenlesbares Label des aktuellen Schritts
   index: number;
   total: number;
@@ -34,8 +36,11 @@ interface State {
   splits: number[];
   // Geschwindigkeit je Abschnitt; speeds.length === splits.length + 1.
   speeds: number[];
+  // Auslassen je Abschnitt; gleiche Länge wie speeds.
+  skips: boolean[];
   processing: boolean;
   uploading: boolean;
+  overlayTime: boolean;
   result: ProcessResult | null;
   error: string | null;
 }
@@ -48,13 +53,82 @@ const state: State = {
   progress: null,
   splits: [],
   speeds: [1],
+  skips: [false],
   processing: false,
   uploading: false,
+  overlayTime: false,
   result: null,
   error: null,
 };
 
 const appRoot = document.getElementById('app')!;
+const STORAGE_KEY = 'videoeditor.project';
+
+// --- Projekt-Persistenz (localStorage) ---
+
+function saveProject(): void {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        source: state.source,
+        splits: state.splits,
+        speeds: state.speeds,
+        skips: state.skips,
+        overlayTime: state.overlayTime,
+      }),
+    );
+  } catch {
+    /* Speicher deaktiviert/voll -> ignorieren */
+  }
+}
+
+function loadProject(): void {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const p = JSON.parse(raw);
+    if (typeof p.source === 'string') state.source = p.source;
+    if (Array.isArray(p.splits) && p.splits.every((n: unknown) => typeof n === 'number')) {
+      state.splits = (p.splits as number[]).slice().sort((a, b) => a - b);
+    }
+    if (
+      Array.isArray(p.speeds) &&
+      p.speeds.length > 0 &&
+      p.speeds.every((n: unknown) => typeof n === 'number' && n > 0)
+    ) {
+      state.speeds = p.speeds as number[];
+    }
+    state.overlayTime = p.overlayTime === true;
+    // Konsistenz sicherstellen: speeds.length === splits.length + 1.
+    if (state.speeds.length !== state.splits.length + 1) {
+      const first = state.speeds[0] ?? 1;
+      state.splits = [];
+      state.speeds = [first];
+    }
+    // skips passend zur Abschnittszahl übernehmen bzw. auffüllen.
+    if (Array.isArray(p.skips) && p.skips.length === state.speeds.length) {
+      state.skips = p.skips.map((b: unknown) => b === true);
+    } else {
+      state.skips = state.speeds.map(() => false);
+    }
+  } catch {
+    /* defekter Eintrag -> ignorieren */
+  }
+}
+
+/** Trenner auf die tatsächliche Videolänge begrenzen (z. B. nach Wiederherstellung). */
+function clampSplitsToDuration(): void {
+  if (state.duration <= 0) return;
+  const valid = state.splits.filter((s) => s > 0 && s < state.duration).sort((a, b) => a - b);
+  if (valid.length === state.splits.length) return; // nichts entfernt
+  state.splits = valid;
+  const need = state.splits.length + 1;
+  if (state.speeds.length > need) state.speeds = state.speeds.slice(0, need);
+  while (state.speeds.length < need) state.speeds.push(1);
+  if (state.skips.length > need) state.skips = state.skips.slice(0, need);
+  while (state.skips.length < need) state.skips.push(false);
+}
 
 // --- Hilfsfunktionen ---
 
@@ -169,15 +243,25 @@ function closeProgress(): void {
   update();
 }
 
+// AbortController des laufenden Verarbeitungs-Requests.
+let currentAbort: AbortController | null = null;
+
+function cancelProcess(): void {
+  currentAbort?.abort();
+  if (state.progress) state.progress.step = 'Wird abgebrochen…';
+  update();
+}
+
 async function process(): Promise<void> {
   if (!state.source) return;
-  const segs = sections().filter((s) => s.end - s.start > 0.05);
+  const segs = sections().filter((s) => !s.skip && s.end - s.start > 0.05);
   if (segs.length === 0) return;
   state.processing = true;
   state.error = null;
   state.result = null;
   state.progress = {
     done: false,
+    cancelled: false,
     step: 'Starte…',
     index: 0,
     total: segs.length,
@@ -188,12 +272,17 @@ async function process(): Promise<void> {
   };
   update();
 
+  const ac = new AbortController();
+  currentAbort = ac;
+
   try {
     const res = await fetch('/api/process', {
       method: 'POST',
+      signal: ac.signal,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         source: state.source,
+        overlayTime: state.overlayTime,
         segments: segs.map((s) => ({
           start: Number(s.start.toFixed(3)),
           end: Number(s.end.toFixed(3)),
@@ -230,9 +319,18 @@ async function process(): Promise<void> {
       }
     }
   } catch (e) {
-    state.error = String(e);
-    if (state.progress) state.progress.error = String(e);
+    if (ac.signal.aborted) {
+      // Vom Nutzer abgebrochen -> kein Fehler.
+      if (state.progress) {
+        state.progress.cancelled = true;
+        state.progress.step = 'Abgebrochen';
+      }
+    } else {
+      state.error = String(e);
+      if (state.progress) state.progress.error = String(e);
+    }
   } finally {
+    currentAbort = null;
     state.processing = false;
     update();
   }
@@ -244,6 +342,7 @@ function selectSource(name: string): void {
   state.source = name;
   state.splits = [];
   state.speeds = [1];
+  state.skips = [false];
   state.result = null;
   state.error = null;
   state.duration = 0;
@@ -256,10 +355,15 @@ function boundaries(): number[] {
   return [0, ...state.splits, state.duration];
 }
 
-/** Aus Trennern und Speeds abgeleitete Abschnitte. */
+/** Aus Trennern, Speeds und Skip-Flags abgeleitete Abschnitte. */
 function sections(): Section[] {
   const b = boundaries();
-  return state.speeds.map((speed, i) => ({ start: b[i]!, end: b[i + 1]!, speed }));
+  return state.speeds.map((speed, i) => ({
+    start: b[i]!,
+    end: b[i + 1]!,
+    speed,
+    skip: state.skips[i] ?? false,
+  }));
 }
 
 /** Fügt einen Trenner an Position t ein und teilt den betroffenen Abschnitt. */
@@ -270,8 +374,9 @@ function addSplit(t: number): void {
   const segIdx = state.splits.filter((s) => s < time).length; // betroffener Abschnitt
   state.splits.push(time);
   state.splits.sort((a, b) => a - b);
-  // Neuer Trenner teilt segIdx -> Speed dieses Abschnitts duplizieren.
+  // Neuer Trenner teilt segIdx -> Speed und Skip-Flag dieses Abschnitts duplizieren.
   state.speeds.splice(segIdx, 0, state.speeds[segIdx] ?? 1);
+  state.skips.splice(segIdx, 0, state.skips[segIdx] ?? false);
   update();
 }
 
@@ -279,11 +384,26 @@ function addSplit(t: number): void {
 function removeSplit(index: number): void {
   state.splits.splice(index, 1);
   state.speeds.splice(index + 1, 1); // rechten Abschnitt-Speed verwerfen
+  state.skips.splice(index + 1, 1);
   update();
 }
 
 function setSpeed(segIdx: number, value: number): void {
   if (value > 0) state.speeds[segIdx] = value;
+  update();
+}
+
+/** Abschnitt aus-/einschließen. */
+function toggleSkip(segIdx: number): void {
+  state.skips[segIdx] = !state.skips[segIdx];
+  update();
+}
+
+/** Alle Trenner entfernen (ein Abschnitt über das ganze Video). */
+function clearSplits(): void {
+  state.splits = [];
+  state.speeds = [1];
+  state.skips = [false];
   update();
 }
 
@@ -350,11 +470,13 @@ function timeline(): TemplateResult {
     >
       ${secs.map(
         (s, i) => html`<div
-          class="seg seg-${i % 2}"
+          class="seg seg-${i % 2}${s.skip ? ' seg-skip' : ''}"
           style="left:${pct(s.start)}%;width:${pct(s.end - s.start)}%"
-          title="Abschnitt ${i + 1}: ${fmt(s.start)}–${fmt(s.end)} · ${s.speed}×"
+          title="Abschnitt ${i + 1}: ${fmt(s.start)}–${fmt(s.end)} · ${s.speed}×${s.skip
+            ? ' · ausgelassen'
+            : ''}"
         >
-          <span>${i + 1} · ${s.speed}×</span>
+          <span>${s.skip ? '⏭ ' : ''}${i + 1} · ${s.speed}×</span>
         </div>`,
       )}
       ${state.splits.map(
@@ -376,8 +498,18 @@ function timeline(): TemplateResult {
 
 function sectionRow(s: Section, i: number): TemplateResult {
   return html`
-    <tr>
+    <tr class=${s.skip ? 'row-skip' : ''}>
       <td>${i + 1}</td>
+      <td>
+        <label class="check-row" title="Abschnitt einbeziehen / auslassen">
+          <input
+            type="checkbox"
+            .checked=${!s.skip}
+            @change=${() => toggleSkip(i)}
+          />
+          ${s.skip ? 'aus' : 'an'}
+        </label>
+      </td>
       <td>
         <div class="cell">
           <span class="time-display">${fmt(s.start)}</span>
@@ -391,6 +523,7 @@ function sectionRow(s: Section, i: number): TemplateResult {
           type="number"
           step="0.1"
           min="0.1"
+          ?disabled=${s.skip}
           .value=${String(s.speed)}
           @change=${(e: Event) => setSpeed(i, Number((e.target as HTMLInputElement).value))}
         />×
@@ -412,12 +545,18 @@ function sectionRow(s: Section, i: number): TemplateResult {
 
 function progressPopup(p: Progress): TemplateResult {
   const percent = p.expected > 0 ? Math.min(100, (p.current / p.expected) * 100) : null;
-  const finished = p.done || !!p.error;
+  const finished = p.done || !!p.error || p.cancelled;
   return html`
     <div class="modal-overlay">
       <div class="modal">
         <h2 style="margin:0 0 6px;font-size:18px">
-          ${p.error ? '❌ Fehler' : p.done ? '✅ Fertig' : '⚙ Verarbeitung läuft…'}
+          ${p.error
+            ? '❌ Fehler'
+            : p.cancelled
+              ? '🛑 Abgebrochen'
+              : p.done
+                ? '✅ Fertig'
+                : '⚙ Verarbeitung läuft…'}
         </h2>
         <p class="hint" style="margin:0 0 12px">${p.step}</p>
         ${percent !== null && !finished
@@ -433,7 +572,11 @@ function progressPopup(p: Progress): TemplateResult {
         <div class="row" style="justify-content:flex-end;margin-top:14px">
           ${finished
             ? html`<button @click=${closeProgress}>Schließen</button>`
-            : html`<span class="hint"><span class="spinner"></span>ffmpeg arbeitet…</span>`}
+            : html`
+                <span class="hint"><span class="spinner"></span>ffmpeg arbeitet…</span>
+                <span class="flex-spacer"></span>
+                <button class="danger" @click=${cancelProcess}>✕ Abbrechen</button>
+              `}
         </div>
       </div>
     </div>
@@ -512,6 +655,7 @@ function appTemplate(): TemplateResult {
               src=${`/videos/${encodeURIComponent(state.source)}`}
               @loadedmetadata=${(e: Event) => {
                 state.duration = (e.target as HTMLVideoElement).duration;
+                clampSplitsToDuration();
                 update();
               }}
               @timeupdate=${(e: Event) => {
@@ -547,6 +691,7 @@ function appTemplate(): TemplateResult {
               <thead>
                 <tr>
                   <th>#</th>
+                  <th>Aktiv</th>
                   <th>Von</th>
                   <th>Bis</th>
                   <th>Dauer</th>
@@ -558,15 +703,39 @@ function appTemplate(): TemplateResult {
                 ${sections().map((s, i) => sectionRow(s, i))}
               </tbody>
             </table>
-            <div class="row" style="margin-top:16px">
-              <button @click=${process} ?disabled=${state.processing}>
+            <label class="check-row" style="margin-top:16px">
+              <input
+                type="checkbox"
+                .checked=${state.overlayTime}
+                @change=${(e: Event) => {
+                  state.overlayTime = (e.target as HTMLInputElement).checked;
+                  update();
+                }}
+              />
+              🕑 Laufende Originalzeit oben rechts einblenden (hh:mm:ss.zehntel)
+            </label>
+            <div class="row" style="margin-top:12px">
+              <button
+                @click=${process}
+                ?disabled=${state.processing || state.skips.every((b) => b)}
+              >
                 ${state.processing
                   ? html`<span class="spinner"></span>Verarbeite…`
                   : '⚙ Clips erstellen & zusammenfügen'}
               </button>
               <span class="hint"
-                >${state.speeds.length} Abschnitt(e), ${state.splits.length} Trenner</span
+                >${state.skips.filter((b) => !b).length} aktiv /
+                ${state.speeds.length} Abschnitte, ${state.splits.length} Trenner</span
               >
+              <span class="flex-spacer"></span>
+              <button
+                class="ghost"
+                ?disabled=${state.splits.length === 0}
+                title="Alle Trenner entfernen"
+                @click=${clearSplits}
+              >
+                ↺ Trenner zurücksetzen
+              </button>
             </div>
           </div>
         `
@@ -580,6 +749,7 @@ function appTemplate(): TemplateResult {
 // --- Render ---
 
 function update(): void {
+  saveProject();
   render(appTemplate(), appRoot);
   // Aktuelle Zeit nach dem Render wiederherstellen (Span enthält bewusst KEINE
   // lit-Binding, damit updateTimeDisplay() den Inhalt gefahrlos setzen darf).
@@ -600,5 +770,6 @@ function updateTimeDisplay(): void {
   if (log) log.scrollTop = log.scrollHeight;
 }
 
+loadProject();
 update();
 loadVideos(8);
