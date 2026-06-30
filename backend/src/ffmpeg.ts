@@ -26,15 +26,30 @@ interface RunResult {
   stderr: string;
 }
 
-function run(bin: string, args: string[]): Promise<RunResult> {
+function run(bin: string, args: string[], onLine?: (line: string) => void): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { windowsHide: true });
     let stderr = '';
+    let buf = '';
     child.stderr.on('data', (d) => {
-      stderr += d.toString();
+      const text = d.toString();
+      stderr += text;
+      if (onLine) {
+        // ffmpeg überschreibt die Fortschrittszeile mit \r -> auf \r und \n splitten.
+        buf += text;
+        const parts = buf.split(/\r\n|\r|\n/);
+        buf = parts.pop() ?? '';
+        for (const p of parts) {
+          const line = p.trim();
+          if (line) onLine(line);
+        }
+      }
     });
     child.on('error', (err) => reject(err));
-    child.on('close', (code) => resolve({ code: code ?? -1, stderr }));
+    child.on('close', (code) => {
+      if (onLine && buf.trim()) onLine(buf.trim());
+      resolve({ code: code ?? -1, stderr });
+    });
   });
 }
 
@@ -96,6 +111,7 @@ export async function extractSegment(
   output: string,
   seg: SegmentSpec,
   withAudio: boolean,
+  onLine?: (line: string) => void,
 ): Promise<void> {
   const { start, end, speed } = seg;
   const vChain = `[0:v]trim=start=${start}:end=${end},setpts=(PTS-STARTPTS)/${speed}[v]`;
@@ -125,7 +141,7 @@ export async function extractSegment(
     ];
   }
 
-  const { code, stderr } = await run(ffmpegPath(), args);
+  const { code, stderr } = await run(ffmpegPath(), args, onLine);
   if (code !== 0) {
     throw new Error(`ffmpeg (Segment) fehlgeschlagen (Code ${code}):\n${tail(stderr)}`);
   }
@@ -135,7 +151,11 @@ export async function extractSegment(
  * Fügt mehrere Clips per concat-Demuxer zusammen (analog scripts/ffmpeg_merge.bat).
  * Erwartet, dass alle Clips dieselben Codec-Parameter besitzen (-c copy).
  */
-export async function mergeSegments(files: string[], output: string): Promise<void> {
+export async function mergeSegments(
+  files: string[],
+  output: string,
+  onLine?: (line: string) => void,
+): Promise<void> {
   if (files.length === 0) throw new Error('Keine Clips zum Zusammenfügen.');
 
   // concat-Demuxer liest eine Liste; wir übergeben sie über stdin via "pipe".
@@ -147,14 +167,11 @@ export async function mergeSegments(files: string[], output: string): Promise<vo
     .join('\n');
   await fs.writeFile(listPath, listContent, 'utf8');
 
-  const { code, stderr } = await run(ffmpegPath(), [
-    '-y',
-    '-f', 'concat',
-    '-safe', '0',
-    '-i', listPath,
-    '-c', 'copy',
-    output,
-  ]);
+  const { code, stderr } = await run(
+    ffmpegPath(),
+    ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', output],
+    onLine,
+  );
 
   await fs.rm(listPath, { force: true });
 

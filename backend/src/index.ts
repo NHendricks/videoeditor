@@ -3,6 +3,7 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { stream } from 'hono/streaming';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -132,43 +133,55 @@ app.post('/api/process', async (c) => {
     }
   }
 
-  // --- Verarbeitung ---
+  // --- Verarbeitung (Fortschritt als NDJSON-Stream) ---
   const jobId = new Date().toISOString().replace(/[:.]/g, '-');
   const jobDir = path.join(OUTPUT_DIR, jobId);
   await fs.mkdir(jobDir, { recursive: true });
 
-  try {
-    const withAudio = await probeHasAudio(inputPath);
-    const sourceBase = path.basename(source, path.extname(source));
+  c.header('Content-Type', 'application/x-ndjson; charset=utf-8');
+  c.header('Cache-Control', 'no-cache, no-transform');
+  c.header('X-Accel-Buffering', 'no');
 
-    const segmentFiles: string[] = [];
-    const segmentResults: { file: string; url: string; spec: SegmentSpec }[] = [];
+  return stream(c, async (s) => {
+    const send = (ev: Record<string, unknown>) => s.writeln(JSON.stringify(ev));
+    try {
+      const withAudio = await probeHasAudio(inputPath);
+      const sourceBase = path.basename(source, path.extname(source));
 
-    for (const [i, seg] of segments.entries()) {
-      const name = `${sourceBase}_part${String(i + 1).padStart(3, '0')}.mp4`;
-      const outPath = path.join(jobDir, name);
-      await extractSegment(inputPath, outPath, seg, withAudio);
-      segmentFiles.push(outPath);
-      segmentResults.push({
-        file: name,
-        url: `/videos/output/${jobId}/${name}`,
-        spec: seg,
-      });
+      await send({ type: 'start', total: segments.length, withAudio });
+
+      const segmentFiles: string[] = [];
+      const segmentResults: { file: string; url: string; spec: SegmentSpec }[] = [];
+
+      for (const [i, seg] of segments.entries()) {
+        const name = `${sourceBase}_part${String(i + 1).padStart(3, '0')}.mp4`;
+        const outPath = path.join(jobDir, name);
+        // Erwartete Ausgabedauer für den Fortschrittsbalken im Frontend.
+        const expected = (seg.end - seg.start) / seg.speed;
+        await send({ type: 'step', step: 'segment', index: i + 1, total: segments.length, expected });
+        await extractSegment(inputPath, outPath, seg, withAudio, (line) =>
+          void send({ type: 'log', line }),
+        );
+        segmentFiles.push(outPath);
+        segmentResults.push({ file: name, url: `/videos/output/${jobId}/${name}`, spec: seg });
+      }
+
+      let merged: { file: string; url: string } | null = null;
+      if (segmentFiles.length >= 1) {
+        const mergedName = `${sourceBase}_merged.mp4`;
+        const mergedPath = path.join(jobDir, mergedName);
+        const expected = segments.reduce((sum, sg) => sum + (sg.end - sg.start) / sg.speed, 0);
+        await send({ type: 'step', step: 'merge', expected });
+        await mergeSegments(segmentFiles, mergedPath, (line) => void send({ type: 'log', line }));
+        merged = { file: mergedName, url: `/videos/output/${jobId}/${mergedName}` };
+      }
+
+      await send({ type: 'done', result: { jobId, withAudio, segments: segmentResults, merged } });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await send({ type: 'error', message });
     }
-
-    let merged: { file: string; url: string } | null = null;
-    if (segmentFiles.length >= 1) {
-      const mergedName = `${sourceBase}_merged.mp4`;
-      const mergedPath = path.join(jobDir, mergedName);
-      await mergeSegments(segmentFiles, mergedPath);
-      merged = { file: mergedName, url: `/videos/output/${jobId}/${mergedName}` };
-    }
-
-    return c.json({ jobId, withAudio, segments: segmentResults, merged });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return c.json({ error: message }, 500);
-  }
+  });
 });
 
 app.get('/api/health', (c) => c.json({ ok: true, ffmpeg: ffmpegPath() }));

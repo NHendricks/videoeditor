@@ -1,0 +1,3 @@
+- aktuelles projekt speichern in localstorage
+- mehrere videos zusammenfügen erlauben
+- zeit einblenden als video bearbeitungsfunktion

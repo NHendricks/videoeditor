@@ -250,11 +250,26 @@ td .cell {
   position: absolute;
   top: -2px;
   bottom: -2px;
-  width: 0;
-  border-left: 2px solid #ffd166;
+  width: 2px;
+  background: #ffd166;
   margin-left: -1px;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
   z-index: 2;
+}
+
+.timeline .split:active {
+  cursor: grabbing;
+}
+
+/* Breiterer, unsichtbarer Greifbereich für den schmalen Marker. */
+.timeline .split::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -6px;
+  right: -6px;
 }
 
 .timeline .split::before {
@@ -267,12 +282,67 @@ td .cell {
   color: #06231a;
   border-radius: 3px;
   padding: 0 1px;
+  cursor: grab;
 }
 
-.timeline .split:hover::before {
-  content: '✕';
-  background: var(--danger);
-  color: #fff;
+.timeline .split:hover {
+  background: #ffe08a;
+}
+
+body.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  width: 100%;
+  max-width: 680px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.progressbar {
+  height: 10px;
+  background: #14161b;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.progressbar .bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.15s linear;
+}
+
+.ff-log {
+  background: #0e0f13;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 0;
+  height: 220px;
+  overflow-y: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #b9c0cc;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .timeline .playhead {
